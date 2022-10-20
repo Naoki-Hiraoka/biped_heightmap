@@ -6,6 +6,9 @@
 
   <maintainer email="hiraoka@jsk.imi.i.u-tokyo.ac.jp">hiraoka</maintainer>
 
+  <author>98shimpei</author>
+  <author>yuki-shark</author>
+
   <license>BSD</license>
 
   <buildtool_depend>catkin</buildtool_depend>
