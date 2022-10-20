@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>biped_heightmap</name>
+  <version>0.0.0</version>
+  <description>The biped_heightmap package</description>
+
+  <maintainer email="hiraoka@jsk.imi.i.u-tokyo.ac.jp">hiraoka</maintainer>
+
+  <license>BSD</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <depend>biped_heightmap_msgs</depend>
+  <depend>jsk_recognition_msgs</depend>
+  <depend>jsk_topic_tools</depend>
+  <depend>jsk_pcl_ros</depend>
+  <depend>nodelet</depend>
+
+  <export>
+    <nodelet plugin="${prefix}/nodelet_description.xml"/>
+  </export>
+
+</package>

@@ -1,0 +1,9 @@
+<library path="lib/libbiped_heightmap">
+  <class name="biped_heightmap/HeightmapEstimator"
+     type="biped_heightmap::HeightmapEstimator"
+     base_class_type="nodelet::Nodelet">
+    <description>
+    </description>
+  </class>
+
+</library>
