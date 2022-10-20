@@ -6,4 +6,11 @@
     </description>
   </class>
 
+  <class name="biped_heightmap/SteppableRegionPublisher"
+     type="biped_heightmap::SteppableRegionPublisher"
+     base_class_type="nodelet::Nodelet">
+    <description>
+    </description>
+  </class>
+
 </library>

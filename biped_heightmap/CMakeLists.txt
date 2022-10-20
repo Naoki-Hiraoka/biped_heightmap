@@ -5,8 +5,9 @@ add_compile_options(-std=c++11)
 set(CMAKE_BUILD_TYPE Release)
 
 find_package(catkin REQUIRED COMPONENTS
-  biped_heightmap_msgs
   jsk_pcl_ros
+  jsk_topic_tools
+  biped_heightmap_msgs
   jsk_recognition_msgs
   sensor_msgs
   cv_bridge
@@ -14,8 +15,9 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   pluginlib
   nodelet
-  jsk_topic_tools
+  tf_conversions
   )
+find_package(OpenCV REQUIRED core imgproc)
 
 catkin_package(
 #  INCLUDE_DIRS include
@@ -31,7 +33,15 @@ catkin_package(
 include_directories(
   # include
   ${catkin_INCLUDE_DIRS}
+  ${OpenCV_INCLUDE_DIRS} 
 )
 
-add_library(${PROJECT_NAME} src/heightmap_estimator.cpp)
-target_link_libraries(${PROJECT_NAME} ${catkin_LIBRARIES})
+add_library(${PROJECT_NAME}
+  src/heightmap_estimator.cpp
+  src/steppable_region_publisher.cpp
+  src/polypartition.cpp
+  )
+target_link_libraries(${PROJECT_NAME}
+  ${catkin_LIBRARIES}
+  ${OpenCV_LIBRARIES}
+  )

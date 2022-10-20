@@ -35,8 +35,7 @@ namespace biped_heightmap {
   void HeightmapEstimator::onInit()
   {
     DiagnosticNodelet::onInit();
-    pub_config_ = pnh_->advertise<jsk_recognition_msgs::HeightmapConfig>(
-      "output/config", 1);
+    pub_config_ = pnh_->advertise<jsk_recognition_msgs::HeightmapConfig>("output/config", 1, true);
     sub_config_ = pnh_->subscribe(
       jsk_pcl_ros::getHeightmapConfigTopic(pnh_->resolveName("input")), 1,
       &HeightmapEstimator::configCallback, this);
@@ -75,11 +74,12 @@ namespace biped_heightmap {
     }
 
     cv::Mat float_image = cv_bridge::toCvShare(msg, sensor_msgs::image_encodings::TYPE_32FC2)->image;
-    ROS_WARN("b");
+
     int height = float_image.rows;
     int width  = float_image.cols;
 
-    //inFiniteな部分には隣のzをコピー
+
+    // inFiniteな部分には隣のzをコピー
     for (int j = 0; j < height; j++) {
       for (int i = 0; i < width; i++) {
         float v = float_image.at<cv::Vec2f>(j, i)[0];
