@@ -117,9 +117,9 @@ namespace biped_heightmap {
     pub_visualized_landing_pose_ = pnh_->advertise<visualization_msgs::Marker>("visualized_landing_pose", 1);
     pnh_->param<float>("close_range_", close_range_, 0.03);
     pnh_->param<float>("median_range_", median_range_, 0.02);
-    pnh_->param<float>("steppable_range", steppable_range_, 0.12);
+    pnh_->param<float>("steppable_range", steppable_range_, 0.14);
     pnh_->param<float>("steppable_slope_angle", steppable_slope_angle_, 0.35);
-    pnh_->param<float>("step_range", step_range_, 0.15);
+    pnh_->param<float>("step_range", step_range_, 0.17);
     pnh_->param<float>("step_height", step_height_, 0.04);
     pnh_->param<float>("obstacle_range", obstacle_range_, 0.30);
     pnh_->param<float>("obstacle_height", obstacle_height_, 0.4);
