@@ -45,12 +45,13 @@ namespace biped_heightmap {
     double max_y_;
 
     // param
-    float dilate_range_; // [m]. radius
+    float close_range_; // [m]. radius. heightmapのところどころ欠けているところを埋めるための
     float median_range_; // [m]. radius
     float obstacle_range_; // [m]
     float obstacle_height_; // [m]
+    float step_range_; // [m]. step_range <= obstacle_range
+    float step_height_; // [m]
     float steppable_range_; // [m]. steppable_range <= obstacle_range
-    float steppable_terrain_angle_;// [rad]
     float steppable_slope_angle_;// [rad]
     float opening_range_; // [m]. radius
     float closing_range_; // [m]. radius
@@ -109,18 +110,20 @@ namespace biped_heightmap {
     pub_steppable_region_ = pnh_->advertise<biped_heightmap_msgs::SteppableRegion>("steppable_region", 1);
     pub_visualized_image_ = pnh_->advertise<sensor_msgs::Image> ("visualized_image", 1);
     pub_visualized_steppable_region_ = pnh_->advertise<jsk_recognition_msgs::PolygonArray> ("visualized_steppable_region", 1);
-    pnh_->param<float>("dilate_range_", dilate_range_, 0.03);
+    pnh_->param<float>("close_range_", close_range_, 0.03);
     pnh_->param<float>("median_range_", median_range_, 0.02);
-    pnh_->param<float>("obstacle_range", obstacle_range_, 0.15);
-    pnh_->param<float>("obstacle_height", obstacle_height_, 0.04);
     pnh_->param<float>("steppable_range", steppable_range_, 0.12);
-    pnh_->param<float>("steppable_terrain_angle", steppable_terrain_angle_, 0.20);
     pnh_->param<float>("steppable_slope_angle", steppable_slope_angle_, 0.35);
-    pnh_->param<float>("opening_range_", opening_range_, 0.02);
-    pnh_->param<float>("closing_range_", closing_range_, 0.02);
+    pnh_->param<float>("step_range", step_range_, 0.15);
+    pnh_->param<float>("step_height", step_height_, 0.04);
+    pnh_->param<float>("obstacle_range", obstacle_range_, 0.30);
+    pnh_->param<float>("obstacle_height", obstacle_height_, 0.4);
+    pnh_->param<float>("opening_range_", opening_range_, 0.03);
+    pnh_->param<float>("closing_range_", closing_range_, 0.03);
     pnh_->param<std::string>("world_frame_", world_frame_, std::string("odom"));
 
     steppable_range_ = std::min(steppable_range_, obstacle_range_);
+    step_range_ = std::min(step_range_, obstacle_range_);
     onInitPostProcess();
   }
 
@@ -199,125 +202,59 @@ namespace biped_heightmap {
     double dx = (max_x_ - min_x_) / width;
     double dy = (max_y_ - min_y_) / height;
 
-    cv::Mat dilate_image = cv::Mat::zeros(height, width, CV_32FC2);
-    cv::dilate(float_image, dilate_image, cv::noArray(), cv::Point(-1, -1), std::max(dilate_range_/dx, dilate_range_/dy)); // heightmapの中でまばらに欠落している点は-FLT_MAXが入っているので、埋める.
+    // heightmapの中でまばらに欠落している点は-FLT_MAXが入っているので、埋める.
+    cv::Mat close_kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(1+closing_range_/dx, 1+closing_range_/dy));
+    cv::Mat close_image = cv::Mat::zeros(height, width, CV_32FC2);
+    cv::morphologyEx(float_image, close_image, CV_MOP_CLOSE,  cv::noArray(), cv::Point(-1, -1), 1);
+
+    //中央値を取る(x,y座標はkernelの中心)
     cv::Mat median_image = cv::Mat::zeros(height, width, CV_32FC2);
-    cv::medianBlur(dilate_image, median_image, 1 + std::max(median_range_/dx, median_range_/dy)); //中央値を取る(x,y座標はkernelの中心)
+    cv::medianBlur(close_image, median_image, 1 + std::max(median_range_/dx, median_range_/dy));
 
     cv::Mat binarized_image = cv::Mat::zeros(height, width, CV_8UC1); // 0: not steppable
     cv::Mat visualized_image = cv::Mat::zeros(height, width, CV_8UC3);
 
-    int steppable_range_x = (int)(steppable_range_/dx);
-    int steppable_range_y = (int)(steppable_range_/dy);
-    float steppable_terrain_edge_height = steppable_range_*std::tan(steppable_terrain_angle_);
-    float steppable_terrain_corner_height = steppable_terrain_edge_height*std::sqrt(2);
+    // steppable_rangeの範囲で、平らであることを調べる
+    cv::Mat steppable_kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(1+steppable_range_/dx, 1+steppable_range_/dy));
     float steppable_slope_edge_height = steppable_range_*std::tan(steppable_slope_angle_);
-    float steppable_slope_corner_height = steppable_slope_edge_height*std::sqrt(2);
+    cv::Mat min_image = cv::Mat::zeros(height, width, CV_32FC2);
+    cv::erode(median_image, min_image, steppable_kernel, cv::Point(-1, -1), 1);
+    cv::Mat max_image = cv::Mat::zeros(height, width, CV_32FC2);
+    cv::dilate(median_image, max_image, steppable_kernel, cv::Point(-1, -1), 1);
 
-    int obstacle_edge_range_x = (int)(obstacle_range_/dx);
-    int obstacle_edge_range_y = (int)(obstacle_range_/dy);
-    int obstacle_corner_range_x = (int)(obstacle_range_/std::sqrt(2)/dx);
-    int obstacle_corner_range_y = (int)(obstacle_range_/std::sqrt(2)/dy);
+    // step_rangeの範囲で、段差が無いことを調べる
+    cv::Mat step_kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(1+step_range_/dx, 1+step_range_/dy));
+    cv::Mat max_step_image = cv::Mat::zeros(height, width, CV_32FC2);
+    cv::dilate(median_image, max_step_image, step_kernel, cv::Point(-1, -1), 1);
 
-    float front = 0;
-    float right = 0;
-    float left = 0;
-    float back = 0;
-    bool front_flag = 0;
-    bool right_flag = 0;
-    bool left_flag = 0;
-    bool back_flag= 0;
+    // obstacle_rangeの範囲で、平らであることを調べる
+    cv::Mat obstacle_kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(1+obstacle_range_/dx, 1+obstacle_range_/dy));
+    cv::Mat max_obstacle_image = cv::Mat::zeros(height, width, CV_32FC2);
+    cv::dilate(median_image, max_obstacle_image, obstacle_kernel, cv::Point(-1, -1), 1);
 
-    for (int x = (int)(obstacle_edge_range_x); x < (median_image.cols-(int)(obstacle_edge_range_x)); x++) {
-      for (int y = (int)(obstacle_edge_range_y); y < (median_image.rows-(int)(obstacle_edge_range_y)); y++) {
+    for (int x = 0; x < median_image.cols; x++) {
+      for (int y = 0; y < median_image.rows; y++) {
         //floor not exists
-        if(dilate_image.at<cv::Vec2f>(y, x)[0] == -FLT_MAX){
+        if(median_image.at<cv::Vec2f>(y, x)[0] == -FLT_MAX){
           continue;
         }
 
         float center = median_image.at<cv::Vec2f>(y, x)[0];
 
-        bool safe = true;
-        for(int i = -steppable_range_x; i <= steppable_range_x; i++){
-          for(int j = -steppable_range_y; j <= steppable_range_y; j++){
-            float z = median_image.at<cv::Vec2f>(y+j, x+i)[0];
-            if(z > center + steppable_terrain_edge_height || z < center - steppable_terrain_edge_height) safe = false;
-          }
-        }
-        if(!safe) continue;
-
-        // front = (median_image.at<cv::Vec2f>(y-steppable_range_y, x-steppable_range_x)[0] + median_image.at<cv::Vec2f>(y-steppable_range_y, x+steppable_range_x)[0]) / 2.0;
-        // front_flag = true;
-        // if (front + steppable_terrain_edge_height < median_image.at<cv::Vec2f>(y-steppable_range_y, x)[0]) {
-        //   front = median_image.at<cv::Vec2f>(y-steppable_range_y, x)[0];
-        //   front_flag = false;
-        // }
-        // right = (median_image.at<cv::Vec2f>(y-steppable_range_y, x+steppable_range_x)[0] + median_image.at<cv::Vec2f>(y+steppable_range_y, x+steppable_range_x)[0]) / 2.0;
-        // right_flag = true;
-        // if (right + steppable_terrain_edge_height < median_image.at<cv::Vec2f>(y, x+steppable_range_x)[0]) {
-        //   right = median_image.at<cv::Vec2f>(y, x+steppable_range_x)[0];
-        //   right_flag = false;
-        // }
-        // left = (median_image.at<cv::Vec2f>(y-steppable_range_y, x-steppable_range_x)[0] + median_image.at<cv::Vec2f>(y+steppable_range_y, x-steppable_range_x)[0]) / 2.0;
-        // left_flag = true;
-        // if (left + steppable_terrain_edge_height < median_image.at<cv::Vec2f>(y, x-steppable_range_x)[0]) {
-        //   left = median_image.at<cv::Vec2f>(y, x-steppable_range_x)[0];
-        //   left_flag = false;
-        // }
-        // back = (median_image.at<cv::Vec2f>(y+steppable_range_y, x-steppable_range_x)[0] + median_image.at<cv::Vec2f>(y+steppable_range_y, x+steppable_range_x)[0]) / 2.0;
-        // back_flag = true;
-        // if (back + steppable_terrain_edge_height < median_image.at<cv::Vec2f>(y+steppable_range_y, x)[0]) {
-        //   back = median_image.at<cv::Vec2f>(y+steppable_range_y, x)[0];
-        //   back_flag = false;
-        // }
-
-        // //凸性
-        // if (std::abs(front + back - right - left) > steppable_terrain_edge_height*2) {
-        //   continue;
-        // }
-        // center = (front + back + right + left) / 4.0;
-        // if (center + steppable_terrain_edge_height < median_image.at<cv::Vec2f>(y, x)[0]) {
-        //   continue;
-        // }
-
-        // //ひねり
-        // if (front_flag && std::abs(median_image.at<cv::Vec2f>(y-steppable_range_y, x-steppable_range_x)[0] - median_image.at<cv::Vec2f>(y-steppable_range_y, x+steppable_range_x)[0] + right - left) > steppable_terrain_edge_height) {
-        //   continue;
-        // }
-        // if (right_flag && std::abs(median_image.at<cv::Vec2f>(y-steppable_range_y, x+steppable_range_x)[0] - median_image.at<cv::Vec2f>(y+steppable_range_y, x+steppable_range_x)[0] + back - front) > steppable_terrain_edge_height) {
-        //   continue;
-        // }
-        // if (left_flag && std::abs(median_image.at<cv::Vec2f>(y-steppable_range_y, x-steppable_range_x)[0] - median_image.at<cv::Vec2f>(y+steppable_range_y, x-steppable_range_x)[0] + back - front) > steppable_terrain_edge_height) {
-        //   continue;
-        // }
-        // if (back_flag && std::abs(median_image.at<cv::Vec2f>(y+steppable_range_y, x-steppable_range_x)[0] - median_image.at<cv::Vec2f>(y+steppable_range_y, x+steppable_range_x)[0] + right - left) > steppable_terrain_edge_height) {
-        //   continue;
-        // }
-
-        // //傾き
-        // if (std::abs(front - back) > steppable_slope_edge_height*2) {
-        //   continue;
-        // }
-        // if (std::abs(right - left) > steppable_slope_edge_height*2) {
-        //   continue;
-        // }
+        // steppable_rangeの範囲で、平らであることを調べる
+        if(max_image.at<cv::Vec2f>(y, x)[0] - center > steppable_slope_edge_height) continue;
+        if(center - min_image.at<cv::Vec2f>(y, x)[0] > steppable_slope_edge_height) continue;
 
         visualized_image.at<cv::Vec3b>(y, x)[0] = 100;
         visualized_image.at<cv::Vec3b>(y, x)[1] = 100;
         visualized_image.at<cv::Vec3b>(y, x)[2] = 100;
 
-        // obstacle
-        if (
-            median_image.at<cv::Vec2f>(y+obstacle_edge_range_y, x)[0] - center > obstacle_height_ ||
-            median_image.at<cv::Vec2f>(y, x+obstacle_edge_range_x)[0] - center > obstacle_height_ ||
-            median_image.at<cv::Vec2f>(y-obstacle_edge_range_y, x)[0] - center > obstacle_height_ ||
-            median_image.at<cv::Vec2f>(y, x-obstacle_edge_range_x)[0] - center > obstacle_height_ ||
-            median_image.at<cv::Vec2f>(y+obstacle_corner_range_y, x+obstacle_corner_range_x)[0] - center > obstacle_height_ ||
-            median_image.at<cv::Vec2f>(y+obstacle_corner_range_y, x-obstacle_corner_range_x)[0] - center > obstacle_height_ ||
-            median_image.at<cv::Vec2f>(y-obstacle_corner_range_y, x+obstacle_corner_range_x)[0] - center > obstacle_height_ ||
-            median_image.at<cv::Vec2f>(y-obstacle_corner_range_y, x-obstacle_corner_range_x)[0] - center > obstacle_height_) {
-          continue;
-        }
+        // step_rangeの範囲で、段差が無いことを調べる
+        if(max_step_image.at<cv::Vec2f>(y, x)[0] - center > step_height_) continue;
+
+        // obstacle_rangeの範囲で、段差が無いことを調べる
+        if(max_obstacle_image.at<cv::Vec2f>(y, x)[0] - center > obstacle_height_) continue;
+
         binarized_image.at<uchar>(y, x) = 255;
         visualized_image.at<cv::Vec3b>(y, x)[0] = 200;
         visualized_image.at<cv::Vec3b>(y, x)[1] = 200;
@@ -325,9 +262,10 @@ namespace biped_heightmap {
       }
     }
 
+    // 小さな点の除去
     cv::morphologyEx(binarized_image, binarized_image, CV_MOP_CLOSE, cv::noArray(), cv::Point(-1, -1), std::max(opening_range_/dx, opening_range_/dy));
     cv::morphologyEx(binarized_image, binarized_image, CV_MOP_OPEN,  cv::noArray(), cv::Point(-1, -1), std::max(closing_range_/dx, closing_range_/dy));
-    //cv::erode(binarized_image, binarized_image, cv::noArray(), cv::Point(-1, -1), erode_range);//3
+
     std::vector<std::vector<cv::Point>> contours;
     std::vector<cv::Vec4i> hierarchy;
     cv::findContours(binarized_image, contours, hierarchy, CV_RETR_CCOMP, CV_CHAIN_APPROX_NONE);
