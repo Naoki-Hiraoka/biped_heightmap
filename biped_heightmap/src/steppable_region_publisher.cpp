@@ -9,6 +9,7 @@
 #include <biped_heightmap_msgs/LandingPosition.h>
 #include <tf/transform_listener.h>
 #include <tf_conversions/tf_eigen.h>
+#include <visualization_msgs/Marker.h>
 #include "polypartition.h"
 
 namespace biped_heightmap {
@@ -31,8 +32,10 @@ namespace biped_heightmap {
     std::mutex mutex_;
     std::mutex mutex_target_;
     ros::Publisher pub_steppable_region_;
+    ros::Publisher pub_landing_height_;
     ros::Publisher pub_visualized_image_;
     ros::Publisher pub_visualized_steppable_region_;
+    ros::Publisher pub_visualized_landing_pose_;
     ros::Subscriber sub_;
     ros::Subscriber sub_config_;
     ros::Subscriber sub_landing_target_;
@@ -108,8 +111,10 @@ namespace biped_heightmap {
       &SteppableRegionPublisher::configCallback, this);
     sub_landing_target_ = pnh_->subscribe("landing_target", 1, &SteppableRegionPublisher::targetCallback, this);
     pub_steppable_region_ = pnh_->advertise<biped_heightmap_msgs::SteppableRegion>("steppable_region", 1);
+    pub_landing_height_ = pnh_->advertise<biped_heightmap_msgs::LandingPosition>("landing_height", 1);
     pub_visualized_image_ = pnh_->advertise<sensor_msgs::Image> ("visualized_image", 1);
     pub_visualized_steppable_region_ = pnh_->advertise<jsk_recognition_msgs::PolygonArray> ("visualized_steppable_region", 1);
+    pub_visualized_landing_pose_ = pnh_->advertise<visualization_msgs::Marker>("visualized_landing_pose", 1);
     pnh_->param<float>("close_range_", close_range_, 0.03);
     pnh_->param<float>("median_range_", median_range_, 0.02);
     pnh_->param<float>("steppable_range", steppable_range_, 0.12);
@@ -158,33 +163,98 @@ namespace biped_heightmap {
     listener_.waitForTransform(world_frame_, target_frame, ros::Time(0)/*msg->header.stamp*/, ros::Duration(3.0));
     listener_.lookupTransform(world_frame_, target_frame, ros::Time(0)/*msg->header.stamp*/, transform); // map relative to target_frame
 
-    Eigen::Affine3d cur_foot_pos_d;
-    tf::transformTFToEigen(transform, cur_foot_pos_d);
-    Eigen::Affine3f cur_foot_pos = cur_foot_pos_d.cast<float>();
-    cur_foot_pos.linear() = orientCoordToAxis(cur_foot_pos.linear(), Eigen::Vector3f::UnitZ());
-    Eigen::Affine3f cur_foot_pos_to_heightmap_pos = cur_foot_pos.inverse() * heightmap_pos_;
+    Eigen::Affine3d support_pose_d; // world_frame
+    tf::transformTFToEigen(transform, support_pose_d);
+    Eigen::Affine3f support_pose = support_pose_d.cast<float>();  // world_frame
+    Eigen::Affine3f support_pose_horizontal = support_pose;  // world_frame
+    support_pose_horizontal.linear() = orientCoordToAxis(support_pose_horizontal.linear(), Eigen::Vector3f::UnitZ());
+    Eigen::Affine3f support_pose_to_heightmap_pos = support_pose.inverse() * heightmap_pos_;
 
+    // convert to polygon relative to leg_end_coords
     biped_heightmap_msgs::SteppableRegion sr;
     sr.header.frame_id = target_frame;
     sr.header.stamp = msg->header.stamp;
     sr.l_r = msg->l_r;
-
-    // convert to polygon relative to leg_end_coords
     sr.polygons.resize(combined_meshes_.polygons.size());
     for (size_t i = 0; i < combined_meshes_.polygons.size(); i++) {
       size_t vs_num(combined_meshes_.polygons[i].polygon.points.size());
       sr.polygons[i].header = sr.header;
       sr.polygons[i].polygon.points.resize(vs_num);
       for (size_t j = 0; j < vs_num; j++) {
-        Eigen::Vector3f p_map(combined_meshes_.polygons[i].polygon.points[j].x, combined_meshes_.polygons[i].polygon.points[j].y, combined_meshes_.polygons[i].polygon.points[j].z);
-        Eigen::Vector3f p = cur_foot_pos_to_heightmap_pos * p_map;
+        Eigen::Vector3f p_map(combined_meshes_.polygons[i].polygon.points[j].x, combined_meshes_.polygons[i].polygon.points[j].y, combined_meshes_.polygons[i].polygon.points[j].z);// heightmap frame
+        Eigen::Vector3f p = support_pose_to_heightmap_pos * p_map; // support leg horizontal frame
         sr.polygons[i].polygon.points[j].x = p[0];
         sr.polygons[i].polygon.points[j].y = p[1];
         sr.polygons[i].polygon.points[j].z = p[2];
       }
     }
-
     pub_steppable_region_.publish(sr);
+
+    // calc landing height
+    Eigen::Vector3f swing_pos = support_pose_horizontal * Eigen::Vector3f(msg->x,msg->y,msg->z);  // world_frame
+    Eigen::Vector3f swing_pos_in_heightmap_frame = heightmap_pos_.inverse() * swing_pos; // heightmap_frame
+    if(swing_pos_in_heightmap_frame[0] < min_x_ ||
+       swing_pos_in_heightmap_frame[0] > max_x_ ||
+       swing_pos_in_heightmap_frame[1] < min_y_ ||
+       swing_pos_in_heightmap_frame[1] > max_y_) {
+      NODELET_ERROR("landing_target is outside heightmap");
+      return;
+    }
+    int height = median_image_.rows;
+    int width  = median_image_.cols;
+    double dx = (max_x_ - min_x_) / width;
+    double dy = (max_y_ - min_y_) / height;
+    int heightmap_x = (swing_pos_in_heightmap_frame[0] + dx/2 - min_x_) / dx;
+    int heightmap_y = (swing_pos_in_heightmap_frame[1] + dy/2 - min_y_) / dy;
+    if(median_image_.at<cv::Vec2f>(heightmap_y, heightmap_x)[0] != -FLT_MAX){
+      swing_pos_in_heightmap_frame[2] = median_image_.at<cv::Vec2f>(heightmap_y, heightmap_x)[0];
+    }
+    swing_pos = heightmap_pos_ * swing_pos_in_heightmap_frame;
+
+    biped_heightmap_msgs::LandingPosition height_msg;
+    height_msg.header.frame_id = target_frame;
+    height_msg.header.stamp = msg->header.stamp;
+    height_msg.l_r = msg->l_r;
+    Eigen::Vector3f swing_pos_in_support_leg_horizontal_frame = support_pose_horizontal.inverse() * swing_pos; // support leg horizontal frame
+    height_msg.x =  swing_pos_in_support_leg_horizontal_frame[0];
+    height_msg.y =  swing_pos_in_support_leg_horizontal_frame[1];
+    height_msg.z =  swing_pos_in_support_leg_horizontal_frame[2];
+    height_msg.nx =  0;
+    height_msg.ny =  0;
+    height_msg.nz =  1;
+    pub_landing_height_.publish(height_msg);
+
+    // publish pose msg for visualize
+    Eigen::Vector3f start_pos =  swing_pos; // world frame
+    Eigen::Vector3f end_pos = swing_pos + 0.3 * Eigen::Vector3f(0, 0, 1); // world frame
+    visualization_msgs::Marker pose_msg;
+    pose_msg.header.stamp = msg->header.stamp;
+    pose_msg.header.frame_id = world_frame_;
+    pose_msg.ns = "landing_pose";
+    pose_msg.id = 0;
+    pose_msg.lifetime = ros::Duration();
+    pose_msg.type = visualization_msgs::Marker::ARROW;
+    pose_msg.action = visualization_msgs::Marker::ADD;
+    geometry_msgs::Point start;
+    start.x = start_pos(0);
+    start.y = start_pos(1);
+    start.z = start_pos(2);
+    geometry_msgs::Point end;
+    end.x = end_pos(0);
+    end.y = end_pos(1);
+    end.z = end_pos(2);
+    pose_msg.points.push_back(start);
+    pose_msg.points.push_back(end);
+    pose_msg.color.r = 0.0;
+    pose_msg.color.g = 0.8;
+    pose_msg.color.b = 1.0;
+    pose_msg.color.a = 1.0;
+    pose_msg.scale.x = 0.03;
+    pose_msg.scale.y = 0.05;
+    pose_msg.scale.z = 0.07;
+    pose_msg.pose.orientation.w = 1.0;
+    pub_visualized_landing_pose_.publish(pose_msg);
+
   }
 
   void SteppableRegionPublisher::heightmapCallback(const sensor_msgs::Image::ConstPtr& msg)

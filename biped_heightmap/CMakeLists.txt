@@ -16,6 +16,7 @@ find_package(catkin REQUIRED COMPONENTS
   pluginlib
   nodelet
   tf_conversions
+  visualization_msgs
   )
 find_package(OpenCV REQUIRED core imgproc)
 
