@@ -54,8 +54,10 @@ namespace biped_heightmap {
     float steppable_slope_angle_;// [rad]
     float opening_range_; // [m]. radius
     float closing_range_; // [m]. radius
+    std::string world_frame_; // heightmapをこのframeで保存する. heightmapが移動する座標系で表現されていてもよいように
 
     sensor_msgs::Image::ConstPtr heightmap_msg_;
+    Eigen::Affine3f heightmap_pos_ = Eigen::Affine3f::Identity();
     cv::Mat median_image_;
     jsk_recognition_msgs::PolygonArray combined_meshes_;
 
@@ -116,6 +118,7 @@ namespace biped_heightmap {
     pnh_->param<float>("steppable_slope_angle", steppable_slope_angle_, 0.35);
     pnh_->param<float>("opening_range_", opening_range_, 0.02);
     pnh_->param<float>("closing_range_", closing_range_, 0.02);
+    pnh_->param<std::string>("world_frame_", world_frame_, std::string("odom"));
 
     steppable_range_ = std::min(steppable_range_, obstacle_range_);
     onInitPostProcess();
@@ -149,14 +152,14 @@ namespace biped_heightmap {
     }
 
     tf::StampedTransform transform;
-    listener_.waitForTransform(heightmap_msg_->header.frame_id, target_frame, msg->header.stamp, ros::Duration(3.0));
-    listener_.lookupTransform(heightmap_msg_->header.frame_id, target_frame, msg->header.stamp, transform); // map relative to target_frame
+    listener_.waitForTransform(world_frame_, target_frame, ros::Time(0)/*msg->header.stamp*/, ros::Duration(3.0));
+    listener_.lookupTransform(world_frame_, target_frame, ros::Time(0)/*msg->header.stamp*/, transform); // map relative to target_frame
 
     Eigen::Affine3d cur_foot_pos_d;
     tf::transformTFToEigen(transform, cur_foot_pos_d);
     Eigen::Affine3f cur_foot_pos = cur_foot_pos_d.cast<float>();
     cur_foot_pos.linear() = orientCoordToAxis(cur_foot_pos.linear(), Eigen::Vector3f::UnitZ());
-    Eigen::Affine3f cur_foot_pos_inv = cur_foot_pos.inverse();
+    Eigen::Affine3f cur_foot_pos_to_heightmap_pos = cur_foot_pos.inverse() * heightmap_pos_;
 
     biped_heightmap_msgs::SteppableRegion sr;
     sr.header.frame_id = target_frame;
@@ -171,7 +174,7 @@ namespace biped_heightmap {
       sr.polygons[i].polygon.points.resize(vs_num);
       for (size_t j = 0; j < vs_num; j++) {
         Eigen::Vector3f p_map(combined_meshes_.polygons[i].polygon.points[j].x, combined_meshes_.polygons[i].polygon.points[j].y, combined_meshes_.polygons[i].polygon.points[j].z);
-        Eigen::Vector3f p = cur_foot_pos_inv * p_map;
+        Eigen::Vector3f p = cur_foot_pos_to_heightmap_pos * p_map;
         sr.polygons[i].polygon.points[j].x = p[0];
         sr.polygons[i].polygon.points[j].y = p[1];
         sr.polygons[i].polygon.points[j].z = p[2];
@@ -423,6 +426,12 @@ namespace biped_heightmap {
       is_combined[i] = true;
     }
 
+    tf::StampedTransform transform;
+    listener_.waitForTransform(world_frame_, msg->header.frame_id, msg->header.stamp, ros::Duration(3.0));
+    listener_.lookupTransform(world_frame_, msg->header.frame_id, msg->header.stamp, transform);
+    Eigen::Affine3d heightmap_pos_d;
+    tf::transformTFToEigen(transform, heightmap_pos_d);
+
     {
       std::lock_guard<std::mutex> lock(mutex_target_);
 
@@ -443,6 +452,8 @@ namespace biped_heightmap {
       pub_visualized_steppable_region_.publish(combined_meshes_);
 
       median_image_ = median_image;
+
+      heightmap_pos_ = heightmap_pos_d.cast<float>();
     }
   }
 
