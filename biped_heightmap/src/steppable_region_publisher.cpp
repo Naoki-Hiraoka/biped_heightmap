@@ -55,7 +55,7 @@ namespace biped_heightmap {
     float step_range_; // [m]. step_range <= obstacle_range
     float step_height_; // [m]
     float steppable_range_; // [m]. steppable_range <= obstacle_range
-    float steppable_slope_angle_;// [rad]
+    float steppable_height_;// [m]
     float opening_range_; // [m]. radius
     float closing_range_; // [m]. radius
     std::string world_frame_; // heightmapをこのframeで保存する. heightmapが移動する座標系で表現されていてもよいように
@@ -117,8 +117,8 @@ namespace biped_heightmap {
     pub_visualized_landing_pose_ = pnh_->advertise<visualization_msgs::Marker>("visualized_landing_pose", 1);
     pnh_->param<float>("close_range_", close_range_, 0.03);
     pnh_->param<float>("median_range_", median_range_, 0.02);
-    pnh_->param<float>("steppable_range", steppable_range_, 0.14);
-    pnh_->param<float>("steppable_slope_angle", steppable_slope_angle_, 0.35);
+    pnh_->param<float>("steppable_range", steppable_range_, 0.10);
+    pnh_->param<float>("steppable_height", steppable_height_, 0.05);
     pnh_->param<float>("step_range", step_range_, 0.17);
     pnh_->param<float>("step_height", step_height_, 0.04);
     pnh_->param<float>("obstacle_range", obstacle_range_, 0.30);
@@ -273,32 +273,31 @@ namespace biped_heightmap {
     double dy = (max_y_ - min_y_) / height;
 
     // heightmapの中でまばらに欠落している点は-FLT_MAXが入っているので、埋める.
-    cv::Mat close_kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(1+closing_range_/dx, 1+closing_range_/dy));
+    cv::Mat close_kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(1+2*int(closing_range_/dx), 1+2*int(closing_range_/dy)));
     cv::Mat close_image = cv::Mat::zeros(height, width, CV_32FC2);
     cv::morphologyEx(float_image, close_image, CV_MOP_CLOSE,  cv::noArray(), cv::Point(-1, -1), 1);
 
     //中央値を取る(x,y座標はkernelの中心)
     cv::Mat median_image = cv::Mat::zeros(height, width, CV_32FC2);
-    cv::medianBlur(close_image, median_image, 1 + std::max(median_range_/dx, median_range_/dy));
+    cv::medianBlur(close_image, median_image, 1 + 2*std::max(int(median_range_/dx), int(median_range_/dy)));
 
     cv::Mat binarized_image = cv::Mat::zeros(height, width, CV_8UC1); // 0: not steppable
     cv::Mat visualized_image = cv::Mat::zeros(height, width, CV_8UC3);
 
     // steppable_rangeの範囲で、平らであることを調べる
-    cv::Mat steppable_kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(1+steppable_range_/dx, 1+steppable_range_/dy));
-    float steppable_slope_edge_height = steppable_range_*std::tan(steppable_slope_angle_);
+    cv::Mat steppable_kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(1+2*int(steppable_range_/dx), 1+2*int(steppable_range_/dy)));
     cv::Mat min_image = cv::Mat::zeros(height, width, CV_32FC2);
     cv::erode(median_image, min_image, steppable_kernel, cv::Point(-1, -1), 1);
     cv::Mat max_image = cv::Mat::zeros(height, width, CV_32FC2);
     cv::dilate(median_image, max_image, steppable_kernel, cv::Point(-1, -1), 1);
 
     // step_rangeの範囲で、段差が無いことを調べる
-    cv::Mat step_kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(1+step_range_/dx, 1+step_range_/dy));
+    cv::Mat step_kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(1+2*int(step_range_/dx), 1+2*int(step_range_/dy)));
     cv::Mat max_step_image = cv::Mat::zeros(height, width, CV_32FC2);
     cv::dilate(median_image, max_step_image, step_kernel, cv::Point(-1, -1), 1);
 
     // obstacle_rangeの範囲で、平らであることを調べる
-    cv::Mat obstacle_kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(1+obstacle_range_/dx, 1+obstacle_range_/dy));
+    cv::Mat obstacle_kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(1+2*int(obstacle_range_/dx), 1+2*int(obstacle_range_/dy)));
     cv::Mat max_obstacle_image = cv::Mat::zeros(height, width, CV_32FC2);
     cv::dilate(median_image, max_obstacle_image, obstacle_kernel, cv::Point(-1, -1), 1);
 
@@ -312,8 +311,7 @@ namespace biped_heightmap {
         float center = median_image.at<cv::Vec2f>(y, x)[0];
 
         // steppable_rangeの範囲で、平らであることを調べる
-        if(max_image.at<cv::Vec2f>(y, x)[0] - center > steppable_slope_edge_height) continue;
-        if(center - min_image.at<cv::Vec2f>(y, x)[0] > steppable_slope_edge_height) continue;
+        if(max_image.at<cv::Vec2f>(y, x)[0] - min_image.at<cv::Vec2f>(y, x)[0] > steppable_height_) continue;
 
         visualized_image.at<cv::Vec3b>(y, x)[0] = 100;
         visualized_image.at<cv::Vec3b>(y, x)[1] = 100;
