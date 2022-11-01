@@ -117,13 +117,13 @@ namespace biped_heightmap {
     pub_visualized_landing_pose_ = pnh_->advertise<visualization_msgs::Marker>("visualized_landing_pose", 1);
     pnh_->param<float>("close_range_", close_range_, 0.03); // heightmapのresolutionと同じだと、割り算して0になることがあるので、少し大きい方がいい
     pnh_->param<float>("median_range_", median_range_, 0.03); // heightmapのresolutionと同じだと、割り算して0になることがあるので、少し大きい方がいい
-    pnh_->param<float>("steppable_range", steppable_range_, 0.07);
+    pnh_->param<float>("steppable_range", steppable_range_, 0.09);
     pnh_->param<float>("steppable_height", steppable_height_, 0.06);
     pnh_->param<float>("step_range", step_range_, 0.14);
     pnh_->param<float>("step_height", step_height_, 0.06);
     pnh_->param<float>("obstacle_range", obstacle_range_, 0.30);
     pnh_->param<float>("obstacle_height", obstacle_height_, 0.4);
-    pnh_->param<float>("opening_range_", opening_range_, 0.03); // heightmapのresolutionと同じだと、割り算して0になることがあるので、少し大きい方がいい
+    pnh_->param<float>("opening_range_", opening_range_, 0.01); // heightmapのresolutionと同じだと、割り算して0になることがあるので、少し大きい方がいい
     pnh_->param<float>("closing_range_", closing_range_, 0.03); // heightmapのresolutionと同じだと、割り算して0になることがあるので、少し大きい方がいい
     pnh_->param<std::string>("world_frame_", world_frame_, std::string("odom"));
 
