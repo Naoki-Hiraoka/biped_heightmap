@@ -160,8 +160,13 @@ namespace biped_heightmap {
     }
 
     tf::StampedTransform transform;
-    listener_.waitForTransform(world_frame_, target_frame, ros::Time(0)/*msg->header.stamp*/, ros::Duration(3.0));
-    listener_.lookupTransform(world_frame_, target_frame, ros::Time(0)/*msg->header.stamp*/, transform); // map relative to target_frame
+    try{
+      listener_.waitForTransform(world_frame_, target_frame, ros::Time(0)/*msg->header.stamp*/, ros::Duration(3.0));
+      listener_.lookupTransform(world_frame_, target_frame, ros::Time(0)/*msg->header.stamp*/, transform); // map relative to target_frame
+    }catch (std::exception& ex) {
+      ROS_ERROR_STREAM(ex.what());
+      return;
+    }
 
     Eigen::Affine3d support_pose_d; // world_frame
     tf::transformTFToEigen(transform, support_pose_d);
@@ -433,8 +438,13 @@ namespace biped_heightmap {
     }
 
     tf::StampedTransform transform;
-    listener_.waitForTransform(world_frame_, msg->header.frame_id, msg->header.stamp, ros::Duration(3.0));
-    listener_.lookupTransform(world_frame_, msg->header.frame_id, msg->header.stamp, transform);
+    try{
+      listener_.waitForTransform(world_frame_, msg->header.frame_id, msg->header.stamp, ros::Duration(3.0));
+      listener_.lookupTransform(world_frame_, msg->header.frame_id, msg->header.stamp, transform);
+    }catch (std::exception& ex) {
+      ROS_ERROR_STREAM(ex.what());
+      return;
+    }
     Eigen::Affine3d heightmap_pos_d;
     tf::transformTFToEigen(transform, heightmap_pos_d);
 
